@@ -1,0 +1,182 @@
+# Example workflow showing different ways to use the action
+
+name: Deploy with Environment Variables
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+
+env:
+  IS_STAGING: ${{ github.ref_name == 'main' }}
+
+jobs:
+  # Example 1: Basic usage
+  basic-example:
+    name: Basic Usage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load environment variables
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            .env.production
+
+      - name: Use loaded variables
+        run: |
+          echo "App name: $APP_NAME"
+          echo "Environment: $ENVIRONMENT"
+
+  # Example 2: Multi-environment setup
+  multi-environment:
+    name: Multi-Environment Setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load environment files
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            ${{ env.IS_STAGING == 'true' && '.env.staging' || '.env.production' }}
+
+      - name: Build application
+        run: npm run build
+
+  # Example 3: Monorepo with multiple apps
+  monorepo-example:
+    name: Monorepo Example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load workspace-wide config
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            .env.production
+
+      - name: Load API config
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            apps/api/.env.common
+            apps/api/.env.production
+
+      - name: Load Frontend config
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            apps/frontend/.env.common
+            apps/frontend/.env.production
+
+      - name: Build all apps
+        run: |
+          cd apps/api && npm run build
+          cd ../frontend && npm run build
+
+  # Example 4: With variable logging (for debugging)
+  debug-example:
+    name: Debug Mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load with logging
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            .env.production
+          log-variables: true
+
+  # Example 5: Fail on missing files
+  strict-mode:
+    name: Strict Mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load required files
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.required
+            .env.production
+          fail-on-missing: true
+
+  # Example 6: Matrix strategy with environment-specific files
+  matrix-example:
+    name: Matrix Deployment
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [development, staging, production]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Load environment-specific config
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            .env.${{ matrix.environment }}
+
+      - name: Deploy to ${{ matrix.environment }}
+        run: |
+          echo "Deploying to ${{ matrix.environment }}"
+          echo "API URL: $API_URL"
+
+  # Example 7: Complete CI/CD pipeline
+  full-cicd:
+    name: Full CI/CD Pipeline
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'staging' || 'production' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Load environment configuration
+        uses: kezios/load-multiple-env-files-action@v1
+        with:
+          files: |
+            .env.common
+            ${{ env.IS_STAGING == 'true' && '.env.staging' || '.env.production' }}
+            apps/front/.env.common
+            ${{ env.IS_STAGING == 'true' && 'apps/front/.env.staging' || 'apps/front/.env.production' }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        env:
+          # Variables from .env files are available here
+          NODE_ENV: test
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy
+        run: |
+          echo "Deploying to $DEPLOY_TARGET"
+          # Use variables loaded from .env files
+          ./deploy.sh --target=$DEPLOY_TARGET --api-url=$API_URL
+

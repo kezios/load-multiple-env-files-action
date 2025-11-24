@@ -1,0 +1,249 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+jobs:
+  test-basic:
+    name: Test Basic Functionality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test .env files
+        run: |
+          # Create test files
+          echo "COMMON_VAR=common_value" > .env.common
+          echo "ENV_VAR=production_value" > .env.production
+          echo "OVERRIDE_VAR=will_be_overridden" >> .env.common
+          echo "OVERRIDE_VAR=final_value" >> .env.production
+
+          # Create subdirectory files
+          mkdir -p apps/front
+          echo "APP_NAME=frontend" > apps/front/.env.common
+          echo "APP_ENV=production" > apps/front/.env.production
+
+          # Debug: show file contents
+          echo "=== .env.common ==="
+          cat .env.common
+          echo "=== .env.production ==="
+          cat .env.production
+
+      - name: Test action with multiple files
+        uses: ./
+        with:
+          files: |
+            .env.common
+            .env.production
+            apps/front/.env.common
+            apps/front/.env.production
+
+      - name: Verify variables are loaded
+        run: |
+          echo "Testing loaded variables..."
+
+          if [ "$COMMON_VAR" != "common_value" ]; then
+            echo "❌ COMMON_VAR not loaded correctly: got '$COMMON_VAR', expected 'common_value'"
+            exit 1
+          fi
+          echo "✓ COMMON_VAR loaded correctly"
+
+          if [ "$ENV_VAR" != "production_value" ]; then
+            echo "❌ ENV_VAR not loaded correctly: got '$ENV_VAR', expected 'production_value'"
+            exit 1
+          fi
+          echo "✓ ENV_VAR loaded correctly"
+
+          if [ "$OVERRIDE_VAR" != "final_value" ]; then
+            echo "❌ OVERRIDE_VAR not overridden correctly: got '$OVERRIDE_VAR', expected 'final_value'"
+            exit 1
+          fi
+          echo "✓ OVERRIDE_VAR overridden correctly"
+
+          if [ "$APP_NAME" != "frontend" ]; then
+            echo "❌ APP_NAME not loaded correctly: got '$APP_NAME', expected 'frontend'"
+            exit 1
+          fi
+          echo "✓ APP_NAME loaded correctly"
+
+          if [ "$APP_ENV" != "production" ]; then
+            echo "❌ APP_ENV not loaded correctly: got '$APP_ENV', expected 'production'"
+            exit 1
+          fi
+          echo "✓ APP_ENV loaded correctly"
+
+          echo ""
+          echo "✅ All tests passed!"
+
+  test-missing-files:
+    name: Test Missing Files (Skip)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create partial test files
+        run: |
+          echo "EXISTING_VAR=value" > .env.existing
+
+      - name: Test action with missing files (should not fail)
+        uses: ./
+        with:
+          files: |
+            .env.existing
+            .env.missing
+            .env.also-missing
+
+      - name: Verify existing variable is loaded
+        run: |
+          if [ "$EXISTING_VAR" != "value" ]; then
+            echo "❌ EXISTING_VAR not loaded"
+            exit 1
+          fi
+          echo "✅ Missing files were skipped successfully"
+
+  test-fail-on-missing:
+    name: Test Fail on Missing Files
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: |
+          echo "VAR=value" > .env.exists
+
+      - name: Test action with missing file (should fail)
+        id: test-fail
+        continue-on-error: true
+        uses: ./
+        with:
+          files: |
+            .env.exists
+            .env.does-not-exist
+          fail-on-missing: true
+
+      - name: Verify action failed
+        run: |
+          if [ "${{ steps.test-fail.outcome }}" != "failure" ]; then
+            echo "❌ Action should have failed on missing file"
+            exit 1
+          fi
+          echo "✅ Action correctly failed on missing file"
+
+  test-comments-and-empty-lines:
+    name: Test Comments and Empty Lines
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file with comments
+        run: |
+          cat > .env.test << 'EOF'
+          # This is a comment
+          VAR1=value1
+
+          # Another comment
+          VAR2=value2
+
+          VAR3=value3
+          EOF
+
+      - name: Test action
+        uses: ./
+        with:
+          files: .env.test
+
+      - name: Verify variables loaded correctly
+        run: |
+          if [ "$VAR1" != "value1" ] || [ "$VAR2" != "value2" ] || [ "$VAR3" != "value3" ]; then
+            echo "❌ Variables not loaded correctly"
+            exit 1
+          fi
+          echo "✅ Comments and empty lines handled correctly"
+
+  test-with-logging:
+    name: Test Variable Logging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: |
+          echo "LOG_TEST_VAR=value" > .env.test
+
+      - name: Test action with logging enabled
+        uses: ./
+        with:
+          files: .env.test
+          log-variables: true
+
+      - name: Verify variable loaded
+        run: |
+          if [ "$LOG_TEST_VAR" != "value" ]; then
+            echo "❌ Variable not loaded"
+            exit 1
+          fi
+          echo "✅ Logging test passed"
+
+  test-conditional-files:
+    name: Test Conditional Files
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [staging, production]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create environment-specific files
+        run: |
+          echo "ENV_TYPE=staging" > .env.staging
+          echo "ENV_TYPE=production" > .env.production
+
+      - name: Load environment-specific file
+        uses: ./
+        with:
+          files: .env.${{ matrix.environment }}
+
+      - name: Verify correct file loaded
+        run: |
+          if [ "$ENV_TYPE" != "${{ matrix.environment }}" ]; then
+            echo "❌ Wrong environment loaded: got '$ENV_TYPE', expected '${{ matrix.environment }}'"
+            exit 1
+          fi
+          echo "✅ Conditional file loading works for ${{ matrix.environment }}"
+
+  test-whitespace-handling:
+    name: Test Whitespace Handling
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create test file with whitespace
+        run: |
+          cat > .env.test << 'EOF'
+            SPACED_VAR=value_with_spaces  
+          NORMAL_VAR=normal
+          EOF
+
+      - name: Test action
+        uses: ./
+        with:
+          files: .env.test
+
+      - name: Verify variables loaded
+        run: |
+          if [ -z "$SPACED_VAR" ] || [ -z "$NORMAL_VAR" ]; then
+            echo "❌ Variables with whitespace not handled correctly"
+            exit 1
+          fi
+          echo "✅ Whitespace handling works correctly"

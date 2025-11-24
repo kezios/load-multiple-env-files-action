@@ -1,0 +1,106 @@
+name: 'Load Multiple ENV Files'
+description: 'Load multiple .env files in order, skipping files that do not exist'
+author: 'Kezios'
+
+branding:
+  icon: 'file-text'
+  color: 'green'
+
+inputs:
+  files:
+    description: 'List of .env files to load (one per line). Files are loaded in order, later files override earlier ones.'
+    required: true
+  log-variables:
+    description: 'Whether to log loaded variable names (not values) for debugging'
+    required: false
+    default: 'false'
+  fail-on-missing:
+    description: 'Whether to fail if any file is missing (default: false, missing files are skipped)'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Load environment files
+      shell: bash
+      run: |
+        echo "🔧 Loading environment files..."
+        
+        FAIL_ON_MISSING="${{ inputs.fail-on-missing }}"
+        LOG_VARIABLES="${{ inputs.log-variables }}"
+        FILES="${{ inputs.files }}"
+        
+        # Track loaded files
+        LOADED_COUNT=0
+        SKIPPED_COUNT=0
+        VARIABLE_COUNT=0
+        
+        # Read files line by line
+        while IFS= read -r file; do
+          # Skip empty lines
+          [[ -z "$file" ]] && continue
+          
+          # Remove leading/trailing whitespace
+          file=$(echo "$file" | xargs)
+          
+          if [ -f "$file" ]; then
+            echo "✓ Loading: $file"
+            
+            # Count variables before
+            if [ -f "$GITHUB_ENV" ]; then
+              VARS_BEFORE=$(wc -l < "$GITHUB_ENV" 2>/dev/null || echo "0")
+            else
+              VARS_BEFORE=0
+            fi
+            
+            # Load file content, skip comments and empty lines
+            while IFS= read -r line || [ -n "$line" ]; do
+              # Skip empty lines and comments
+              [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+              
+              # Trim leading/trailing whitespace
+              line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+              
+              # Ensure line contains = and is not empty
+              if [[ -n "$line" && "$line" == *"="* ]]; then
+                # Write to GITHUB_ENV
+                echo "$line" >> "$GITHUB_ENV"
+                
+                # Log variable name if requested
+                if [ "$LOG_VARIABLES" = "true" ]; then
+                  VAR_NAME="${line%%=*}"
+                  echo "  → $VAR_NAME"
+                fi
+              fi
+            done < "$file"
+            
+            # Count variables after
+            if [ -f "$GITHUB_ENV" ]; then
+              VARS_AFTER=$(wc -l < "$GITHUB_ENV" 2>/dev/null || echo "0")
+            else
+              VARS_AFTER=0
+            fi
+            VARS_LOADED=$((VARS_AFTER - VARS_BEFORE))
+            VARIABLE_COUNT=$((VARIABLE_COUNT + VARS_LOADED))
+            
+            echo "  Loaded $VARS_LOADED variable(s)"
+            LOADED_COUNT=$((LOADED_COUNT + 1))
+          else
+            if [ "$FAIL_ON_MISSING" = "true" ]; then
+              echo "❌ Error: File not found: $file"
+              exit 1
+            else
+              echo "⚠ Skipping (not found): $file"
+              SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+            fi
+          fi
+        done <<< "$FILES"
+        
+        echo ""
+        echo "📊 Summary:"
+        echo "  • Files loaded: $LOADED_COUNT"
+        echo "  • Files skipped: $SKIPPED_COUNT"
+        echo "  • Total variables: $VARIABLE_COUNT"
+        echo "✅ Done!"
+

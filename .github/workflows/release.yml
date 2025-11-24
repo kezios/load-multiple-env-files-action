@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Extract changelog section for this version
+          CHANGELOG=$(sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | sed '$d')
+          
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="Release version $VERSION"
+          fi
+          
+          # Save to file for multiline output
+          echo "$CHANGELOG" > /tmp/changelog.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: /tmp/changelog.txt
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update major version tag
+        if: ${{ !contains(steps.version.outputs.version, 'alpha') && !contains(steps.version.outputs.version, 'beta') && !contains(steps.version.outputs.version, 'rc') }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR_VERSION=$(echo $VERSION | cut -d. -f1)
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Delete existing major version tag if it exists
+          git tag -d v$MAJOR_VERSION 2>/dev/null || true
+          git push origin :refs/tags/v$MAJOR_VERSION 2>/dev/null || true
+          
+          # Create new major version tag
+          git tag -a v$MAJOR_VERSION -m "Update v$MAJOR_VERSION to ${{ steps.version.outputs.tag }}"
+          git push origin v$MAJOR_VERSION
+
